@@ -6,26 +6,30 @@ import (
 	"flag"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 )
-
-func connect(addr string) (*net.Conn, error) {
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	log.Println("Connected to ", conn)
-	return &conn, nil
-}
 
 type response struct {
 	Frequency int `json:"frequency"`
 }
 
+var addr string
+var result response
+
+func api(w http.ResponseWriter, r *http.Request) {
+	b, err := json.Marshal(result)
+	if err != nil {
+		log.Println("Cannot marshall")
+	}
+	w.Write(b)
+	if err != nil {
+		log.Println("Cannot write to api")
+	}
+}
 func main() {
 	var wg sync.WaitGroup
-	var addr string
 	flag.StringVar(&addr, "addr", "127.0.0.1:52550", "Address of tcp server, leave empty to simulate server")
 
 	//test server
@@ -58,7 +62,6 @@ func main() {
 	go func() {
 		defer wg.Done()
 		b := make([]byte, 4096)
-		var result response
 		for {
 			conn, err := net.Dial("tcp", addr)
 			if err != nil {
@@ -75,13 +78,19 @@ func main() {
 					conn.Close()
 					break
 				}
-				json.Unmarshal(b[:n],&result)
+				err = json.Unmarshal(b[:n], &result)
+				if err != nil {
+					log.Println("unmarshal error")
+					break
+				}
 				log.Println(result.Frequency)
 				time.Sleep(1 * time.Second)
 			}
 			time.Sleep(5 * time.Second)
 		}
 	}()
+	http.HandleFunc("/api", api)
+	http.ListenAndServe(":8080", nil)
 	wg.Wait()
 	log.Println("ended")
 }
