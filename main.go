@@ -23,49 +23,58 @@ func main() {
 	var addr string
 	flag.StringVar(&addr, "addr", "127.0.0.1:52550", "Address of tcp server, leave empty to simulate server")
 
-	ln, err := net.Listen("tcp", ":52550")
-	if err != nil {
-		log.Println("Cannot up test server")
-	}
 	//test server
-	go func(ln net.Listener) {
-		defer wg.Done()
-		wg.Add(1)
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Println("Cannot accept on test tcp")
-			}
-			go func(conn net.Conn) {
-				for {
-					conn.Write([]byte("hello\n"))
-					time.Sleep(1 * time.Second)
-					if err != nil {
-						log.Println("breaking")
-						break
-					}
+	if addr == "127.0.0.1:52550" {
+		ln, err := net.Listen("tcp", ":52550")
+		if err != nil {
+			log.Println("Cannot up test server")
+		}
+		go func(ln net.Listener) {
+			defer wg.Done()
+			wg.Add(1)
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					log.Println("Cannot accept on test tcp")
 				}
-			}(conn)
-		}
-	}(ln)
-
-	time.Sleep(2*time.Second)
-	conn, err := net.Dial("tcp", "127.0.0.1:52550")
-	if err != nil {
-		log.Println("cannot dial tcp")
-	}
-	go func(conn net.Conn) {
-		defer wg.Done()
-		wg.Add(1)
-		buf := bufio.NewReader(conn)
-		for {
-			data, err := buf.ReadString('\n')
-			if err != nil {
-				break
+					for {
+						conn.Write([]byte("hello\n"))
+						time.Sleep(1 * time.Second)
+						if err != nil {
+							log.Println("breaking")
+							break
+						}
+					}
 			}
-			log.Print(data)
+		}(ln)
+	}
+
+	time.Sleep(1 * time.Second)
+	go func() {
+		defer wg.Done()
+		b := make([]byte, 4096)
+		for {
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				log.Println("cannot dial tcp")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			buf := bufio.NewReader(conn)
+
+			for {
+				n, err := buf.Read(b)
+				if err != nil {
+					log.Println("read error:", err)
+					conn.Close()
+					break
+				}
+				log.Print(string(b[:n]))
+				time.Sleep(1 * time.Second)
+			}
+			time.Sleep(5 * time.Second)
 		}
-	}(conn)
+	}()
 	wg.Wait()
 	log.Println("ended")
 }
