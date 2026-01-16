@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"log"
 	"net"
@@ -16,6 +17,10 @@ func connect(addr string) (*net.Conn, error) {
 	}
 	log.Println("Connected to ", conn)
 	return &conn, nil
+}
+
+type response struct {
+	Frequency int `json:"frequency"`
 }
 
 func main() {
@@ -37,14 +42,14 @@ func main() {
 				if err != nil {
 					log.Println("Cannot accept on test tcp")
 				}
-					for {
-						conn.Write([]byte("hello\n"))
-						time.Sleep(1 * time.Second)
-						if err != nil {
-							log.Println("breaking")
-							break
-						}
+				for {
+					conn.Write([]byte(`{"frequency":10}`))
+					time.Sleep(1 * time.Second)
+					if err != nil {
+						log.Println("breaking")
+						break
 					}
+				}
 			}
 		}(ln)
 	}
@@ -53,6 +58,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		b := make([]byte, 4096)
+		var result response
 		for {
 			conn, err := net.Dial("tcp", addr)
 			if err != nil {
@@ -69,7 +75,8 @@ func main() {
 					conn.Close()
 					break
 				}
-				log.Print(string(b[:n]))
+				json.Unmarshal(b[:n],&result)
+				log.Println(result.Frequency)
 				time.Sleep(1 * time.Second)
 			}
 			time.Sleep(5 * time.Second)
