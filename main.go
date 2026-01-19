@@ -44,6 +44,7 @@ func main() {
 	reg.MustRegister(frequencyGauge)
 	var wg sync.WaitGroup
 	flag.StringVar(&addr, "addr", "127.0.0.1:52550", "Address of tcp server, leave empty to simulate server")
+	flag.Parse()
 
 	//test server
 	if addr == "127.0.0.1:52550" {
