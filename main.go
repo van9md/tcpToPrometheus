@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,103 +16,87 @@ import (
 )
 
 type response struct {
-	Frequency int `json:"frequency"`
+	Frequency int  `json:"frequency"`
+	Status    bool `json:"status,omitempty"`
 }
 
-var addr string
-var result response
-var frequencyGauge = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "accelerator_signal_frequency_hertz",
-		Help: "main frequency of linac",
-	}, []string{"tip"},
+var (
+	addr   string
+	result response
+	mu     sync.RWMutex
+
+	frequencyGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "accelerator_signal_frequency_hertz",
+			Help: "main frequency of linac",
+		},
+		[]string{"tip"},
+	)
 )
 
 func api(w http.ResponseWriter, r *http.Request) {
+	mu.RLock()
 	b, err := json.Marshal(result)
+	mu.RUnlock()
+
 	if err != nil {
-		log.Println("Cannot marshall")
+		http.Error(w, "Cannot marshal", http.StatusInternalServerError)
+		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
-	if err != nil {
-		log.Println("Cannot write to api")
-	}
 }
 
 func main() {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(frequencyGauge)
-	var wg sync.WaitGroup
-	flag.StringVar(&addr, "addr", "127.0.0.1:52550", "Address of tcp server, leave empty to simulate server")
+
+	flag.StringVar(&addr, "addr", "127.0.0.1:52550", "Address of tcp server")
 	flag.Parse()
 
-	//test server
-	if addr == "127.0.0.1:52550" {
-		ln, err := net.Listen("tcp", ":52550")
-		if err != nil {
-			log.Println("Cannot up test server")
-		}
+	log.Println("Server is on", addr)
 
-		go func(ln net.Listener) {
-			defer wg.Done()
-			wg.Add(1)
-			for {
-				conn, err := ln.Accept()
-				if err != nil {
-					log.Println("Cannot accept on test tcp")
-				}
-				for {
-					conn.Write([]byte(`{"frequency":10}`))
-					time.Sleep(1 * time.Second)
-					if err != nil {
-						log.Println("breaking")
-						break
-					}
-				}
-			}
-		}(ln)
-	}
-
-	time.Sleep(1 * time.Second)
-	log.Println("Server is on ", addr)
-
+	// Клиент для чтения данных с сервера
 	go func() {
-		defer wg.Done()
-		b := make([]byte, 4096)
 		for {
 			conn, err := net.Dial("tcp", addr)
 			if err != nil {
-				log.Println("cannot dial tcp")
+				log.Printf("cannot dial tcp %s: %v", addr, err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
-			buf := bufio.NewReader(conn)
 
-			for {
-				n, err := buf.Read(b)
-				if err != nil {
-					log.Println("read error:", err)
-					conn.Close()
-					break
+			decoder := json.NewDecoder(conn)
+
+			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
+			if err := decoder.Decode(&result); err != nil {
+				if errors.Is(err, io.EOF) {
+					log.Println("server closed connection after sending data (normal)")
+				} else if errors.Is(err, io.ErrUnexpectedEOF) {
+					log.Println("partial data received — server closed connection prematurely")
+				} else {
+					log.Printf("decode error: %v", err)
 				}
-				err = json.Unmarshal(b[:n], &result)
-				if err != nil {
-					log.Println("unmarshal error")
-					break
-				}
-				frequencyGauge.WithLabelValues("main frequency of linac").Set(float64(result.Frequency))
-				//log.Println(result.Frequency)
-				time.Sleep(1 * time.Second)
+			} else {
+				mu.Lock()
+				frequencyGauge.WithLabelValues("main").Set(float64(result.Frequency))
+				mu.Unlock()
+				log.Printf("parsed: %+v", result)
 			}
+
+			conn.Close()
 			time.Sleep(5 * time.Second)
 		}
 	}()
+
 	http.HandleFunc("/api", api)
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+
 	log.Println("api running on :8080/api")
 	log.Println("metrics running on :8080/metrics")
-	http.ListenAndServe(":8080", nil)
-	wg.Wait()
-	log.Println("ended")
+
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatalf("server failed: %v", err)
+	}
 }
