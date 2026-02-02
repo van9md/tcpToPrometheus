@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"sync"
@@ -78,25 +79,29 @@ func main() {
 				} else {
 					log.Printf("decode error: %v", err)
 				}
+				mu.Lock()
+				frequencyGauge.WithLabelValues("main").Set(float64(math.NaN()))
+				mu.Unlock()
+
 			} else {
 				mu.Lock()
 				frequencyGauge.WithLabelValues("main").Set(float64(result.Frequency))
 				mu.Unlock()
-				log.Printf("parsed: %+v", result)
+				//log.Printf("parsed: %+v", result)
 			}
 
 			conn.Close()
-			time.Sleep(5 * time.Second)
+			time.Sleep(1 * time.Second)
 		}
 	}()
 
 	http.HandleFunc("/api", api)
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 
-	log.Println("api running on :8080/api")
-	log.Println("metrics running on :8080/metrics")
+	log.Println("api running on :8084/api")
+	log.Println("metrics running on :8084/metrics")
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8084", nil); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }
